@@ -615,7 +615,203 @@ at the bottom of index.html,just before </body), insert this
   });
 </script>
 
+# pass mid in movie link ( Already Done )
 
 
+<a href="movie.html?mid=${doc.id}" class="movie-card">
 
+# HALPER FUNCTION TO GET URL PARAMETER
+<script>
+  function getParam(name) {
+    const url = new URL(window.location.href);
+    return url.searchParams.get(name);
+  }
+</script>
+
+# FETCH MOVIE BY MID FROM FIRESTORE 
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+<script>
+  const firebaseConfig = {
+    // Your Firebase config here
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+
+  const mid = getParam("mid");
+  db.collection("movies").doc(mid).get().then(doc => {
+    if (doc.exists) {
+      const movie = doc.data();
+      document.getElementById("movieTitle").textContent = movie.title;
+      document.getElementById("poster").src = movie.poster;
+      document.getElementById("movieLang").textContent = movie.language;
+      document.getElementById("releaseDate").textContent = movie.release_date;
+      document.getElementById("overview").textContent = movie.overview;
+    } else {
+      document.body.innerHTML = "<h2>Movie not found.</h2>";
+    }
+  });
+</script>
+
+# UPDATE movie.html MARKUP 
+<body>
+  <header>
+    <img src="assets/logo.png" alt="FILMSTAR Logo" class="logo" />
+  </header>
+
+  <main class="movie-detail">
+    <img id="poster" class="poster" src="" alt="Movie Poster" />
+    <div class="info">
+      <h1 id="movieTitle">Loading...</h1>
+      <p><strong>Language:</strong> <span id="movieLang"></span></p>
+      <p><strong>Release Date:</strong> <span id="releaseDate"></span></p>
+      <p id="overview"></p>
+
+      <button onclick="showDownloadPopup()" class="btn download">Download</button>
+
+      <!-- Popup already added in earlier steps -->
+    </div>
+  </main>
+</body>
+
+# DYNAMIC FILTER (GENRE/LANGUAGE/YEAR)
+UPDATE YOUR INDEX.HTML
+<section class="filters">
+  <select id="filterGenre"><option value="">All Genres</option></select>
+  <select id="filterLang"><option value="">All Languages</option></select>
+  <select id="filterYear"><option value="">All Years</option></select>
+</section>
+<main>
+  <section class="movie-row">
+    <div class="movies"></div>
+  </section>
+</main>
+
+IN YOUR FIREBASE-INIT SCRIPT (button of index.html)
+<script>
+  // (1) Initialize Firebase / Firestore
+  firebase.initializeApp({ /* your config */ });
+  const db = firebase.firestore();
+
+  // (2) State + DOM refs
+  let allMovies = [];
+  const moviesDiv = document.querySelector(".movies");
+  const selGenre = document.getElementById("filterGenre");
+  const selLang  = document.getElementById("filterLang");
+  const selYear  = document.getElementById("filterYear");
+
+  // (3) Render helpers
+  function renderMovies(list) {
+    moviesDiv.innerHTML = list.map(doc=>`
+      <a href="movie.html?mid=${doc.id}" class="movie-card">
+        <img src="${doc.poster}" alt="${doc.title}"/>
+        <p>${doc.title}</p>
+      </a>
+    `).join("");
+  }
+
+  function populateFilter(selectEl, values) {
+    values.forEach(v=>{
+      const opt = document.createElement("option");
+      opt.value = v; opt.textContent = v;
+      selectEl.appendChild(opt);
+    });
+  }
+
+  // (4) Fetch & build filters
+  db.collection("movies").orderBy("release_date","desc")
+    .get().then(snap=>{
+      snap.forEach(d=> allMovies.push({ id: d.id, ...d.data() }));
+      renderMovies(allMovies);
+
+      // extract unique genres, langs, years
+      const genres = new Set(), langs = new Set(), years = new Set();
+      allMovies.forEach(m=>{
+        (m.genre_ids||[]).forEach(g=>genres.add(g));
+        langs.add(m.language);
+        years.add( m.release_date.slice(0,4) );
+      });
+      populateFilter(selGenre, Array.from(genres).sort());
+      populateFilter(selLang,  Array.from(langs).sort());
+      populateFilter(selYear,  Array.from(years).sort().reverse());
+    });
+
+  // (5) Filter logic
+  function applyFilters() {
+    const g = selGenre.value, l = selLang.value, y = selYear.value;
+    const filtered = allMovies.filter(m=>{
+      const okG = !g || (m.genre_ids||[]).includes(Number(g));
+      const okL = !l || m.language === l;
+      const okY = !y || m.release_date.startsWith(y);
+      return okG && okL && okY;
+    });
+    renderMovies(filtered);
+  }
+  selGenre.onchange = selLang.onchange = selYear.onchange = applyFilters;
+</script>
+
+In dashboard.html add below your "ADD MOVIE" UI 
+<hr>
+<h2>Manage Movies</h2>
+<div id="manageList"></div>
+ENHANCE YOUR SCRIPT 
+<script>
+  const manageDiv = document.getElementById("manageList");
+  // (A) Fetch & render management table
+  function loadManagement() {
+    db.collection("movies").orderBy("release_date","desc")
+      .get().then(snap=>{
+        manageDiv.innerHTML = snap.docs.map(doc=>{
+          const m = doc.data();
+          return `
+            <div class="manage-item" data-id="${doc.id}">
+              <img src="${m.poster}" width="50"/>
+              <strong>${m.title}</strong>
+              <button onclick="editMovie('${doc.id}')">Edit</button>
+              <button onclick="deleteMovie('${doc.id}')">Delete</button>
+            </div>`;
+        }).join("");
+      });
+  }
+  loadManagement();
+
+  // (B) Delete
+  function deleteMovie(id) {
+    if(confirm("Delete this movie?")) {
+      db.collection("movies").doc(id).delete()
+        .then(()=> { alert("Deleted"); loadManagement(); })
+        .catch(e=> alert(e));
+    }
+  }
+
+  // (C) Edit: prompt for new title & overview (you can expand to other fields)
+  function editMovie(id) {
+    db.collection("movies").doc(id).get().then(doc=>{
+      const data = doc.data();
+      const newTitle = prompt("Title:", data.title);
+      const newOverview = prompt("Overview:", data.overview);
+      if(newTitle !== null && newOverview !== null) {
+        db.collection("movies").doc(id).update({
+          title: newTitle,
+          overview: newOverview
+        }).then(()=>{
+          alert("Updated");
+          loadManagement();
+        });
+      }
+    });
+  }
+</script>
+
+
+# QUICK CSS (append to style.css)
+.manage-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px; background: #111; margin-bottom: 5px;
+}
+.manage-item button {
+  background: #e50914; border: none; padding: 4px 8px;
+  color: #fff; border-radius: 3px; cursor: pointer;
+}
+.manage-item button:hover { opacity: 0.8; }
 
